@@ -17,9 +17,10 @@ public:
                                                  uint32_t iterations, double tolerance) const
     {
         std::unordered_map<PageId, PageRank, PageIdHash> pageHashMap;
+        size_t networkSize = network.getSize();
         for (auto const& page : network.getPages()) {
             page.generateId(network.getGenerator());
-            pageHashMap[page.getId()] = 1.0 / network.getSize();
+            pageHashMap[page.getId()] = 1.0 / networkSize;
         }
 
         std::unordered_map<PageId, uint32_t, PageIdHash> numLinks;
@@ -50,19 +51,21 @@ public:
             }
             dangleSum = dangleSum * alpha;
 
+            double danglingWeight = 1.0 / networkSize;
+            double baseValue = dangleSum * danglingWeight + (1.0 - alpha) / networkSize;
             double difference = 0;
+
             for (auto& pageMapElem : pageHashMap) {
                 PageId pageId = pageMapElem.first;
 
-                double danglingWeight = 1.0 / network.getSize();
-                pageMapElem.second = dangleSum * danglingWeight + (1.0 - alpha) / network.getSize();
+                pageMapElem.second = baseValue;
 
                 if (edges.count(pageId) > 0) {
                     for (auto link : edges[pageId]) {
                         pageMapElem.second += alpha * previousPageHashMap[link] / numLinks[link];
                     }
                 }
-                difference += std::abs(previousPageHashMap[pageId] - pageHashMap[pageId]);
+                difference += std::abs(previousPageHashMap[pageId] - pageMapElem.second);
             }
 
 
@@ -72,7 +75,7 @@ public:
                     result.push_back(PageIdAndRank(iter.first, iter.second));
                 }
 
-                ASSERT(result.size() == network.getSize(), "Invalid result size=" << result.size() << ", for network" << network);
+                ASSERT(result.size() == networkSize, "Invalid result size=" << result.size() << ", for network" << network);
 
                 return result;
             }
