@@ -13,17 +13,17 @@ public:
     virtual PageId generateId(std::string const& content) const
     {
         char id_buffer[HASH_LENGTH + 1];
-        FILE *content_file = fopen("temp_content", "w");
+        FILE *content_file = fopen("temp_content_sha256", "w");
 
         fputs(content.data(), content_file);
         fclose(content_file);
 
-        FILE *result_file = popen("sha256sum temp_content", "r");
+        FILE *result_file = popen("sha256sum temp_content_sha256", "r");
 
         fgets(id_buffer, HASH_LENGTH + 1, result_file);
 
         fclose(result_file);
-        std::system("rm temp_content");
+        std::system("rm temp_content_sha256");
 
         return PageId(std::string(id_buffer));
     }

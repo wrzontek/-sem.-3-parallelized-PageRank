@@ -13,7 +13,8 @@ class SingleThreadedPageRankComputer : public PageRankComputer {
 public:
     SingleThreadedPageRankComputer() {};
 
-    std::vector<PageIdAndRank> computeForNetwork(Network const& network, double alpha, uint32_t iterations, double tolerance) const
+    std::vector<PageIdAndRank> computeForNetwork(Network const& network, double alpha,
+                                                 uint32_t iterations, double tolerance) const
     {
         std::unordered_map<PageId, PageRank, PageIdHash> pageHashMap;
         for (auto const& page : network.getPages()) {
