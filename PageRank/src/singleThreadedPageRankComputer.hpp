@@ -41,7 +41,8 @@ public:
                 edges[link].push_back(page.getId());
             }
         }
-
+        double danglingWeight = 1.0 / networkSize;
+        double base = (1.0 - alpha) / networkSize;
         for (uint32_t i = 0; i < iterations; ++i) {
             std::unordered_map<PageId, PageRank, PageIdHash> previousPageHashMap = pageHashMap;
 
@@ -51,8 +52,8 @@ public:
             }
             dangleSum = dangleSum * alpha;
 
-            double danglingWeight = 1.0 / networkSize;
-            double baseValue = dangleSum * danglingWeight + (1.0 - alpha) / networkSize;
+
+            double baseValue = dangleSum * danglingWeight + base;
             double difference = 0;
 
             for (auto& pageMapElem : pageHashMap) {

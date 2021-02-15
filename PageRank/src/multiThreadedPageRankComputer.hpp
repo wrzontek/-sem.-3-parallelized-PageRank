@@ -13,29 +13,43 @@
 #include "immutable/pageIdAndRank.hpp"
 #include "immutable/pageRankComputer.hpp"
 
-static void calculatePageRank (std::unordered_map<PageId, PageRank, PageIdHash> &pageHashMap,
-                        std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
-                        std::unordered_map<PageId, std::vector<PageId>, PageIdHash> &edges,
-                        std::unordered_map<PageId, uint32_t, PageIdHash> &numLinks,
-                        std::vector<PageId> &pages, std::mutex &difference_mutex,
-                        double alpha, double &difference, double baseValue) {
-    std::lock_guard<std::mutex> lock(difference_mutex);
+
+struct PageRankComputerState {
+    PageRankComputerState(std::unordered_map<PageId, PageRank, PageIdHash> &pageHashMap,
+                          std::unordered_map<PageId, std::vector<PageId>, PageIdHash> &edges,
+                          std::unordered_map<PageId, uint32_t, PageIdHash> &numLinks,
+                          double alpha):
+            pageHashMap(pageHashMap), edges(edges), numLinks(numLinks),
+            alpha(alpha), baseValue(0)
+    {}
+
+    std::unordered_map<PageId, PageRank, PageIdHash> &pageHashMap;
+    std::unordered_map<PageId, std::vector<PageId>, PageIdHash> &edges;
+    std::unordered_map<PageId, uint32_t, PageIdHash> &numLinks;
+    double alpha;
+    double baseValue;
+};
+
+static void calculatePageRank (PageRankComputerState &state,
+                               std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
+                               std::vector<PageId> &pages, std::mutex &difference_mutex, double &difference) {
+
+    std::cout << "zaczynam " << std::this_thread::get_id() << std::endl;
     double dif = 0;
-    for (PageId pageId : pages) {
-        auto pageMapElem = pageHashMap.find(pageId);
+    for (PageId &pageId : pages) {
+        auto pageMapElem = state.pageHashMap.find(pageId);
+        pageMapElem->second = state.baseValue;
 
-        pageMapElem->second = baseValue;
-
-        if (edges.count(pageId) > 0) {
-            for (auto link : edges[pageId]) {
-                pageMapElem->second += alpha * previousPageHashMap[link] / numLinks[link];
+        if (state.edges.count(pageId) > 0) {
+            for (auto link : state.edges[pageId]) {
+                pageMapElem->second += state.alpha * previousPageHashMap[link] / state.numLinks[link];
             }
         }
 
         dif += std::abs(previousPageHashMap[pageId] - pageMapElem->second);
     }
 
-
+    std::lock_guard<std::mutex> lock(difference_mutex);
     difference += dif;
     std::cout << "skonczylem " << std::this_thread::get_id() << std::endl;
 }
@@ -48,21 +62,19 @@ public:
     std::vector<PageIdAndRank> computeForNetwork(Network const& network, double alpha,
                                                  uint32_t iterations, double tolerance) const
     {
+        size_t networkSize = network.getSize();
         std::vector<std::vector<PageId>> managedPages; // each helper thread will have a vector of Pages that it manages
         std::vector<std::thread> threads;
         managedPages.resize(numThreads);
 
         std::unordered_map<PageId, PageRank, PageIdHash> pageHashMap;
         uint32_t manager = 0;
-        size_t networkSize = network.getSize();
         for (auto const& page : network.getPages()) {
-            page.generateId(network.getGenerator());
+            page.generateId(network.getGenerator()); //todo współbieżnie
             pageHashMap[page.getId()] = 1.0 / networkSize;
 
             managedPages[manager].push_back(page.getId());
-            manager++;
-            if (manager == numThreads)
-                manager = 0;
+            manager = (manager + 1) % numThreads;
         }
 
         std::unordered_map<PageId, uint32_t, PageIdHash> numLinks;
@@ -84,45 +96,48 @@ public:
             }
         }
 
+        double danglingWeight = 1.0 / networkSize;
+        double base = (1.0 - alpha) / networkSize;
+
+        PageRankComputerState state = PageRankComputerState(pageHashMap, edges, numLinks, alpha);
+
         for (uint32_t i = 0; i < iterations; ++i) {
             std::unordered_map<PageId, PageRank, PageIdHash> previousPageHashMap = pageHashMap;
 
             double dangleSum = 0;
             for (auto danglingNode : danglingNodes) {
-                dangleSum += previousPageHashMap[danglingNode];
+                dangleSum += previousPageHashMap[danglingNode]; //todo współbieżnie
             }
             dangleSum = dangleSum * alpha;
 
             double difference = 0;
-            double danglingWeight = 1.0 / networkSize;
-            double base_value = dangleSum * danglingWeight + (1.0 - alpha) / networkSize;
+            state.baseValue = dangleSum * danglingWeight + base;
 
             for (uint32_t t = 0; t < numThreads; t++) {
-                std::vector<PageId> pages = managedPages[t];
-                //threads.push_back(std::thread{[this]{test();}});
-                std::thread thread{calculatePageRank,std::ref(pageHashMap),
-                                   std::ref(previousPageHashMap),std::ref(edges),
+                std::vector<PageId> &pages = managedPages[t];
+
+                /*std::thread thread{calculatePageRank, std::ref(pageHashMap),
+                                   std::ref(previousPageHashMap), std::ref(edges),
                                    std::ref(numLinks), std::ref(pages),
                                    std::ref(difference_mutex), alpha,
-                                   std::ref(difference), base_value};
-                std::cout << "startuje " << thread.get_id() << std::endl;
+                                   std::ref(difference), base_value};*/
 
-                threads.push_back(std::move(thread));
-                //threads.push_back(std::thread{[&pageHashMap, &previousPageHashMap, &edges, &numLinks, &managedPages, &this.difference_mutex,  networkSize, alpha, &difference, dangleSum]
-                //                {calculatePageRank(pageHashMap, previousPageHashMap, edges, numLinks, managedPages, this->difference_mutex, networkSize, alpha, difference, dangleSum);}});
+                threads.push_back(std::thread{calculatePageRank, std::ref(state),
+                                              std::ref(previousPageHashMap), std::ref(pages),
+                                              std::ref(difference_mutex), std::ref(difference)});
             }
 
-
+            //std::this_thread::sleep_for(std::chrono::seconds(1));
 
             for (std::thread &thread : threads) {
                 if (thread.joinable()) {
-                    std::cout << "joinuje " << thread.get_id() << std::endl;
+                    //std::cout << "joinuje " << thread.get_id() << std::endl;
                     thread.join();
                 }
             }
             threads.clear();
 
-            std::cout << "TUTAJ 2\n";
+            std::cout << "PO CLEAR\n";
 
             if (difference < tolerance) {
                 std::vector<PageIdAndRank> result;
