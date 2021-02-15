@@ -29,14 +29,14 @@ int main()
     };
     std::vector<std::shared_ptr<PageRankComputer>> computersToTest = {
         std::shared_ptr<PageRankComputer>(new SingleThreadedPageRankComputer {}),
-        std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 1 }),
+/*        std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 1 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 2 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 3 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 4 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 5 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 7 }),
         std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 8 }),
-        std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 9 }),
+        std::shared_ptr<PageRankComputer>(new MultiThreadedPageRankComputer { 9 }),*/
     };
 
     SimpleIdGenerator idGenerator("b7628d82a284526971095162ba34be8bc05c6e06b9face83b46c2813f7f2157b");
@@ -44,14 +44,14 @@ int main()
     for (auto computer : computersToTest) {
 
         for (auto scenario : scenarios) {
-            // std::cout << "Starting scenario with numberOfNodes=" << scenario.numberOfNodes << ", alpha=" << scenario.alpha << std::endl;
+             std::cout << "Starting scenario with numberOfNodes=" << scenario.numberOfNodes << ", alpha=" << scenario.alpha << std::endl;
             auto result = computer->computeForNetwork(
                 networkGenerator.generateNetworkOfSize(scenario.numberOfNodes),
                 scenario.alpha,
                 scenario.iterations,
                 scenario.tolerance);
             ResultVerificator::verifyResults(result, scenario.expectedResult, networkGenerator);
-            // std::cout << "Scenario finished with successed" << std::endl;
+             std::cout << "Scenario finished with successed" << std::endl;
         }
     }
 
