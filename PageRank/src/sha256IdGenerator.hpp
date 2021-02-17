@@ -3,6 +3,8 @@
 
 #include <unistd.h>
 #include <exception>
+#include <thread>
+#include <atomic>
 #include "immutable/idGenerator.hpp"
 #include "immutable/pageId.hpp"
 
@@ -12,20 +14,30 @@ class Sha256IdGenerator : public IdGenerator {
 public:
     virtual PageId generateId(std::string const& content) const
     {
-        char id_buffer[HASH_LENGTH + 1];
-        FILE *content_file = fopen("temp_content_sha256", "w");
+        char idBuffer[HASH_LENGTH + 1];
 
-        fputs(content.data(), content_file);
-        fclose(content_file);
+        auto myid = std::this_thread::get_id();
+        std::stringstream ss;
+        ss << myid;
+        std::string threadId = ss.str();
+        std::string tempFilename = "temp_sha256_" + threadId;
 
-        FILE *result_file = popen("sha256sum temp_content_sha256", "r");
+        FILE *contentFile = fopen(tempFilename.data(), "w");
 
-        fgets(id_buffer, HASH_LENGTH + 1, result_file);
+        fputs(content.data(), contentFile);
+        fclose(contentFile);
 
-        fclose(result_file);
-        std::system("rm temp_content_sha256");
+        std::string command = "sha256sum " + tempFilename;
+        FILE *resultFile = popen(command.data(), "r");
 
-        return PageId(std::string(id_buffer));
+        fgets(idBuffer, HASH_LENGTH + 1, resultFile);
+
+        fclose(resultFile);
+
+        command = "rm " + tempFilename;
+        std::system(command.data());
+
+        return PageId(std::string(idBuffer));
     }
 };
 
