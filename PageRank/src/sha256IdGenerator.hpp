@@ -20,6 +20,7 @@ public:
         std::stringstream ss;
         ss << myid;
         std::string threadId = ss.str();
+
         std::string tempFilename = "temp_sha256_" + threadId;
 
         FILE *contentFile = fopen(tempFilename.data(), "w");

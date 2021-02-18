@@ -55,5 +55,5 @@ int main()
         }
     }
 
-    return 123;
+    return 0;
 }

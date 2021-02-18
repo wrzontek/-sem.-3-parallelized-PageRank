@@ -42,5 +42,5 @@ int main()
     pageRankComputationWithNumNodes(500000, MultiThreadedPageRankComputer { 3 }, networkWithoutEdgesGenerator);
     pageRankComputationWithNumNodes(500000, MultiThreadedPageRankComputer { 4 }, networkWithoutEdgesGenerator);
     pageRankComputationWithNumNodes(500000, MultiThreadedPageRankComputer { 8 }, networkWithoutEdgesGenerator);
-    return 321;
+    return 0;
 }

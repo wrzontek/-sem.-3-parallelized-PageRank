@@ -13,6 +13,13 @@
 #include "immutable/pageIdAndRank.hpp"
 #include "immutable/pageRankComputer.hpp"
 
+static void joinAndClearThreads (std::vector<std::thread> &threads) {
+    for (std::thread &thread : threads) {
+        if (thread.joinable())
+            thread.join();
+    }
+    threads.clear();
+}
 
 struct PageRankComputerState {
     PageRankComputerState(std::unordered_map<PageId, PageRank, PageIdHash> &pageHashMap,
@@ -30,22 +37,51 @@ struct PageRankComputerState {
     double baseValue;
 };
 
-static void calculateDangleSum (std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
-                                std::vector<PageId> &danglingNodes, double &dangleSum, std::mutex &mutex) {
-    double dSum = 0;
-    for (PageId &danglingNode : danglingNodes) {
-        dSum += previousPageHashMap[danglingNode];
+static void preparePages(const PageRankComputerState &state,
+                         const std::vector<const Page*> &pagesToId, const IdGenerator &generator,
+                         std::vector<PageId> &myManagedPages, std::vector<PageId> &myDanglingNodes,
+                         std::mutex &mutex, const double startValue) {
+
+    for (auto const &page : pagesToId) {
+        page->generateId(generator);
+
+        myManagedPages.push_back(page->getId());
+        if (page->getLinks().size() == 0) {
+            myDanglingNodes.push_back(page->getId());
+        }
+
     }
 
     std::lock_guard<std::mutex> lock(mutex);
-    dangleSum += dSum;
+    for (auto const &page : pagesToId) {
+        PageId pageId = page->getId();
+
+        state.numLinks[pageId] = page->getLinks().size();
+
+        for (auto link : page->getLinks()) {
+            state.edges[link].push_back(pageId);
+        }
+
+        state.pageHashMap[pageId] = startValue;
+    }
 }
 
-static void calculatePageRank (PageRankComputerState &state,
-                               std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
-                               std::vector<PageId> &pages, std::mutex &mutex, double &difference) {
-    double dif = 0;
-    for (PageId &pageId : pages) {
+static void calculateDangleSum(std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
+                               const std::vector<PageId> &danglingNodes, double &dangleSum, std::mutex &mutex) {
+    double myDangleSum = 0;
+    for (PageId const &danglingNode : danglingNodes) {
+        myDangleSum += previousPageHashMap[danglingNode];
+    }
+
+    std::lock_guard<std::mutex> lock(mutex);
+    dangleSum += myDangleSum;
+}
+
+static void calculatePageRank(const PageRankComputerState &state,
+                              std::unordered_map<PageId, PageRank, PageIdHash> &previousPageHashMap,
+                              const std::vector<PageId> &pages, std::mutex &mutex, double &difference) {
+    double myDifference = 0;
+    for (PageId const &pageId : pages) {
         auto pageMapElem = state.pageHashMap.find(pageId);
         pageMapElem->second = state.baseValue;
 
@@ -55,11 +91,11 @@ static void calculatePageRank (PageRankComputerState &state,
             }
         }
 
-        dif += std::abs(previousPageHashMap[pageId] - pageMapElem->second);
+        myDifference += std::abs(previousPageHashMap[pageId] - pageMapElem->second);
     }
 
     std::lock_guard<std::mutex> lock(mutex);
-    difference += dif;
+    difference += myDifference;
 }
 
 class MultiThreadedPageRankComputer : public PageRankComputer {
@@ -74,46 +110,40 @@ public:
         std::vector<std::thread> threads;
         std::vector<std::vector<PageId>> managedPages; // each helper thread will have a vector of Pages that it manages
         std::vector<std::vector<PageId>> managedDanglingNodes; // same for dangling nodes
+        std::vector<std::vector<const Page*>> managedPagesGenerateId; // also for generating ids for Pages
 
         managedPages.resize(numThreads);
         managedDanglingNodes.resize(numThreads);
+        managedPagesGenerateId.resize(numThreads);
 
         std::unordered_map<PageId, PageRank, PageIdHash> pageHashMap;
         uint32_t manager = 0;
-        for (auto const& page : network.getPages()) {
-            page.generateId(network.getGenerator()); //todo współbieżnie
-            pageHashMap[page.getId()] = 1.0 / networkSize;
-
-            managedPages[manager].push_back(page.getId());
+        auto &generator = network.getGenerator();
+        for (auto &page : network.getPages()) {
+            managedPagesGenerateId[manager].push_back(&page);
             manager = (manager + 1) % numThreads;
         }
 
         std::unordered_map<PageId, uint32_t, PageIdHash> numLinks;
-        for (auto page : network.getPages()) {
-            numLinks[page.getId()] = page.getLinks().size();
-        }
-
-        manager = 0;
-        std::unordered_set<PageId, PageIdHash> danglingNodes;
-        for (auto page : network.getPages()) {
-            if (page.getLinks().size() == 0) {
-                danglingNodes.insert(page.getId());
-                managedDanglingNodes[manager].push_back(page.getId());
-                manager = (manager + 1) % numThreads;
-            }
-        }
-
         std::unordered_map<PageId, std::vector<PageId>, PageIdHash> edges;
-        for (auto page : network.getPages()) {
-            for (auto link : page.getLinks()) {
-                edges[link].push_back(page.getId());
-            }
+        PageRankComputerState state = PageRankComputerState(pageHashMap, edges, numLinks, alpha);
+
+        double startValue = 1.0 / networkSize;
+        for (uint32_t t = 0; t < numThreads; t++) {
+            std::vector<const Page*> &myPagesToID = managedPagesGenerateId[t];
+            std::vector<PageId> &myPages = managedPages[t];
+            std::vector<PageId> &myDanglingNodes = managedDanglingNodes[t];
+
+            threads.push_back(std::thread{preparePages, std::ref(state),
+                                          std::ref(myPagesToID), std::ref(generator),
+                                          std::ref(myPages), std::ref(myDanglingNodes),
+                                          std::ref(mutex), startValue});
         }
+
+        joinAndClearThreads(threads);
 
         double danglingWeight = 1.0 / networkSize;
         double base = (1.0 - alpha) / networkSize;
-
-        PageRankComputerState state = PageRankComputerState(pageHashMap, edges, numLinks, alpha);
 
         for (uint32_t i = 0; i < iterations; ++i) {
             std::unordered_map<PageId, PageRank, PageIdHash> previousPageHashMap = pageHashMap;
@@ -128,11 +158,7 @@ public:
                                               std::ref(mutex)});
             }
 
-            for (std::thread &thread : threads) {
-                if (thread.joinable())
-                    thread.join();
-            }
-            threads.clear();
+            joinAndClearThreads(threads);
 
             dangleSum = dangleSum * alpha;
 
@@ -147,11 +173,7 @@ public:
                                               std::ref(mutex), std::ref(difference)});
             }
 
-            for (std::thread &thread : threads) {
-                if (thread.joinable())
-                    thread.join();
-            }
-            threads.clear();
+            joinAndClearThreads(threads);
 
             if (difference < tolerance) {
                 std::vector<PageIdAndRank> result;
@@ -178,12 +200,6 @@ public:
 private:
     uint32_t numThreads;
     mutable std::mutex mutex;
-
-    void test() const {
-        std::cout << std::this_thread::get_id() << std::endl;
-    }
-
-
 };
 
 #endif /* SRC_MULTITHREADEDPAGERANKCOMPUTER_HPP_ */
